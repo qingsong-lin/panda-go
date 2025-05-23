@@ -1,0 +1,20 @@
+syntax = "proto3"; // 版本声明，使用Protocol Buffers v3版本
+import "common.proto";
+option go_package = "./pb";  // 指定生成的Go代码在你项目中的导入路径
+
+package pb; // 包名
+import "google/api/annotations.proto";
+
+// 请求消息
+
+
+service PandaAuth {
+  // SayHello 方法
+  rpc SayHello (HelloRequest) returns (HelloResponse) {
+    option(google.api.http)= {
+      post:"/v1/panda-auth/say-hello"
+      body:"*"
+    };
+  }
+}
+

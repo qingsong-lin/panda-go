@@ -1,0 +1,425 @@
+# This file is a template, and might need editing before it works on your project.
+# To contribute improvements to CI/CD templates, please follow the Development guide at:
+# https://docs.gitlab.com/ee/development/cicd/templates.html
+# This specific template is located at:
+# https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/Getting-Started.gitlab-ci.yml
+
+# This is a sample GitLab CI/CD configuration file that should run without any modifications.
+# It demonstrates a basic 3 stage CI/CD pipeline. Instead of real tests or scripts,
+# it uses echo commands to simulate the pipeline execution.
+#
+# A pipeline is composed of independent jobs that run scripts, grouped into stages.
+# Stages run in sequential order, but jobs within stages run in parallel.
+#
+# For more information, see: https://docs.gitlab.com/ee/ci/yaml/index.html#stages
+
+# variables:
+#   DOCKER_HOST: tcp://docker:2375
+#   DOCKER_TLS_CERTDIR: ""
+#   DOCKER_DRIVER: overlay2
+
+# variables:
+#   CI_SERVER_URL: "http://gitlab.lgxcloud.com/panda/asus_script.git"
+stages:
+  - build
+  - test
+  - pre-deploy
+  - deploy
+variables:
+ #docker容器名称,项目地址+版本号
+  CI_CONTAINER_NAME_PRE: "$CI_PROJECT_PATH_SLUG"
+  CI_APPLICATION_REPOSITORY_PANDA_AUTH: "$CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-auth:$CI_COMMIT_REF_NAME-$CI_COMMIT_SHORT_SHA"
+  CI_APPLICATION_REPOSITORY_PANDA_ACCOUNT: "$CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-account:$CI_COMMIT_REF_NAME-$CI_COMMIT_SHORT_SHA"
+#  CI_APPLICATION_REPOSITORY_KAFKA_CLIENT: "$CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/kafka-grpc_client_wrapper:$CI_COMMIT_REF_NAME-$CI_COMMIT_SHORT_SHA"
+  CI_APPLICATION_REPOSITORY_PANDA_EXPORT: "$CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-export:$CI_COMMIT_REF_NAME-$CI_COMMIT_SHORT_SHA"
+  CI_APPLICATION_REPOSITORY_PANDA_GRPC_GW: "$CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-grpc-gw:$CI_COMMIT_REF_NAME-$CI_COMMIT_SHORT_SHA"
+  SECRET_NAME: "docker-image-key"
+  NACOS_CONFIG: "{\"ClientConfig\":{\"NamespaceId\":\"production\",\"Username\":\"nacos\",\"Password\":\"panda\"}, \"ServerConfigs\": [{\"IpAddr\":\"nacos.common\", \"Port\": 8848}]}"
+
+
+build-panda-auth:
+  stage: build
+  image: docker:dind
+  services:
+    - name: docker:dind
+  script:
+    - export DOCKER_HOST="tcp://192.168.50.20:2375"
+    - echo $DOCKER_HOST
+    - docker info
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build --force-rm --build-arg git_username=$CI_DEPLOY_USER --build-arg git_access_token=$CI_DEPLOY_PASSWORD -t $CI_APPLICATION_REPOSITORY_PANDA_AUTH -f panda-auth/Dockerfile .
+    - docker tag $CI_APPLICATION_REPOSITORY_PANDA_AUTH $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-auth:latest
+    - docker push $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-auth
+    - docker push $CI_APPLICATION_REPOSITORY_PANDA_AUTH
+    - docker rmi $CI_APPLICATION_REPOSITORY_PANDA_AUTH
+    - docker rmi $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-auth:latest
+    - echo "build_panda-auth - Compiling the code..."
+    - echo "build_panda-auth - Compile complete."
+  only:
+    changes:
+      - panda-auth/*
+
+unit-test-job-panda-auth:   # This job runs in the test stage.
+  stage: test    # It only starts when the job in the build stage completes successfully.
+  script:
+    - echo "Running unit tests... This will take about 60 seconds."
+#    - sleep 1
+    - echo "Code coverage is 90%"
+  only:
+    changes:
+      - panda-auth/*
+
+lint-test-job-panda-auth:   # This job also runs in the test stage.
+  stage: test    # It can run at the same time as unit-test-job (in parallel).
+  script:
+    - echo "Linting code... This will take about 10 seconds."
+#    - sleep 1
+    - echo "No lint issues found."
+  only:
+    changes:
+      - panda-auth/*
+
+pre-deploy-job-panda-auth:
+  image: dibi/envsubst
+  stage: pre-deploy
+  variables:
+    CI_APPLICATION_REPOSITORY: "$CI_APPLICATION_REPOSITORY_PANDA_AUTH"
+    CI_CONTAINER_NAME: "panda-auth"
+    CI_JAEGER_SERVICE_NAME : "panda-auth"
+  script:
+    - pwd
+    - envsubst < deployment.yaml > deployment_tmp.yaml 
+    - mkdir tmp
+    - mv deployment_tmp.yaml tmp/deployment.yaml
+    - cat tmp/deployment.yaml
+  artifacts:
+    paths:
+    - ./tmp/
+    expire_in: 1 day
+  only:
+    changes:
+      - panda-auth/*
+
+deploy-job-panda-auth:      # This job runs in the deploy stage.
+  image:
+    name: bitnami/kubectl:latest
+    entrypoint: ['']
+  stage: deploy  # It only runs when *both* jobs in the test stage complete successfully.
+  script:
+    - echo "panda-auth - Deploying application..."
+    - echo $CI_CONTAINER_NAME
+    - env
+    - ls
+    - cat tmp/deployment.yaml
+    - echo $CI_CONTAINER_NAME
+    - kubectl config get-contexts
+    # kubectl config use-context path/to/agent/repository:agent-name
+    - kubectl config use-context panda/asus_script:panda-agent
+    # - kubectl get pods -A
+    - kubectl apply -n panda -f tmp/deployment.yaml
+    - echo "panda-auth - Application successfully deployed."
+  dependencies:
+    - pre-deploy-job-panda-auth
+  only:
+    changes:
+      - panda-auth/*
+
+build-panda-account:
+  stage: build
+  image: docker:dind
+  services:
+    - name: docker:dind
+  script:
+    - export DOCKER_HOST="tcp://192.168.50.20:2375"
+    - echo $DOCKER_HOST
+    - docker info
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build --force-rm --build-arg git_username=$CI_DEPLOY_USER --build-arg git_access_token=$CI_DEPLOY_PASSWORD -t $CI_APPLICATION_REPOSITORY_PANDA_ACCOUNT -f panda-account/Dockerfile .
+    - docker tag $CI_APPLICATION_REPOSITORY_PANDA_ACCOUNT $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-account:latest
+    - docker push $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-account
+    - docker push $CI_APPLICATION_REPOSITORY_PANDA_ACCOUNT
+    - docker rmi $CI_APPLICATION_REPOSITORY_PANDA_ACCOUNT
+    - docker rmi $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-account:latest
+    - echo "build_panda-account - Compiling the code..."
+    - echo "build_panda-account - Compile complete."
+  only:
+    changes:
+      - panda-account/*
+
+unit-test-job-panda-account:   # This job runs in the test stage.
+  stage: test    # It only starts when the job in the build stage completes successfully.
+  script:
+    - echo "Running unit tests... This will take about 60 seconds."
+    #    - sleep 1
+    - echo "Code coverage is 90%"
+  only:
+    changes:
+      - panda-account/*
+
+lint-test-job-panda-account:   # This job also runs in the test stage.
+  stage: test    # It can run at the same time as unit-test-job (in parallel).
+  script:
+    - echo "Linting code... This will take about 10 seconds."
+    #    - sleep 1
+    - echo "No lint issues found."
+  only:
+    changes:
+      - panda-account/*
+
+pre-deploy-job-panda-account:
+  image: dibi/envsubst
+  stage: pre-deploy
+  variables:
+    CI_APPLICATION_REPOSITORY: "$CI_APPLICATION_REPOSITORY_PANDA_ACCOUNT"
+    CI_CONTAINER_NAME: "panda-account"
+    CI_JAEGER_SERVICE_NAME : "panda-account"
+  script:
+    - pwd
+    - envsubst < deployment.yaml > deployment_tmp.yaml
+    - mkdir tmp
+    - mv deployment_tmp.yaml tmp/deployment.yaml
+    - cat tmp/deployment.yaml
+  artifacts:
+    paths:
+      - ./tmp/
+    expire_in: 1 day
+  only:
+    changes:
+      - panda-account/*
+
+deploy-job-panda-account:      # This job runs in the deploy stage.
+  image:
+    name: bitnami/kubectl:latest
+    entrypoint: ['']
+  stage: deploy  # It only runs when *both* jobs in the test stage complete successfully.
+  script:
+    - echo "panda-account - Deploying application..."
+    - echo $CI_CONTAINER_NAME
+    - env
+    - ls
+    - cat tmp/deployment.yaml
+    - echo $CI_CONTAINER_NAME
+    - kubectl config get-contexts
+    # kubectl config use-context path/to/agent/repository:agent-name
+    - kubectl config use-context panda/asus_script:panda-agent
+    # - kubectl get pods -A
+    - kubectl apply -n panda -f tmp/deployment.yaml
+    - echo "panda-account - Application successfully deployed."
+  dependencies:
+    - pre-deploy-job-panda-account
+  only:
+    changes:
+      - panda-account/*
+
+
+
+#kafka-grpc_client_wrapper
+#
+#build-kafka-client:
+#  stage: build
+#  image: docker:dind
+#  services:
+#    - name: docker:dind
+#  script:
+#    - export DOCKER_HOST="tcp://192.168.50.20:2375"
+#    - echo $DOCKER_HOST
+#    - docker info
+#    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+#    - docker build --force-rm --build-arg git_username=$CI_DEPLOY_USER --build-arg git_access_token=$CI_DEPLOY_PASSWORD -t $CI_APPLICATION_REPOSITORY_KAFKA_CLIENT -f component/kafka/consumer/Dockerfile .
+#    - docker tag $CI_APPLICATION_REPOSITORY_KAFKA_CLIENT $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/kafka-grpc_client_wrapper:latest
+#    - docker push $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/kafka-grpc_client_wrapper
+#    - docker push $CI_APPLICATION_REPOSITORY_KAFKA_CLIENT
+#    - docker rmi $CI_APPLICATION_REPOSITORY_KAFKA_CLIENT
+#    - docker rmi $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/kafka-grpc_client_wrapper:latest
+#    - echo "build_kafka-grpc_client_wrapper - Compiling the code..."
+#    - echo "build_kafka-grpc_client_wrapper - Compile complete."
+#  only:
+#    changes:
+#      - component/kafka/consumer/*
+#
+#
+#pre-deploy-job-kafka-client:
+#  image: dibi/envsubst
+#  stage: pre-deploy
+#  variables:
+#    CI_APPLICATION_REPOSITORY: "$CI_APPLICATION_REPOSITORY_KAFKA_CLIENT"
+#    CI_CONTAINER_NAME: "$CI_CONTAINER_NAME_PRE-kafka-grpc_client_wrapper"
+#    CI_JAEGER_SERVICE_NAME : "panda-kafka-grpc_client_wrapper"
+#  script:
+#    - pwd
+#    - envsubst < deployment.yaml > deployment_tmp.yaml
+#    - mkdir tmp
+#    - mv deployment_tmp.yaml tmp/deployment.yaml
+#    - cat tmp/deployment.yaml
+#  artifacts:
+#    paths:
+#      - ./tmp/
+#    expire_in: 1 day
+#  only:
+#    changes:
+#      - component/kafka/consumer/*
+#
+#deploy-job-kafka-client:      # This job runs in the deploy stage.
+#  image:
+#    name: bitnami/kubectl:latest
+#    entrypoint: ['']
+#  stage: deploy  # It only runs when *both* jobs in the test stage complete successfully.
+#  script:
+#    - echo "kafka-grpc_client_wrapper - Deploying application..."
+#    - env
+#    - ls
+#    - cat tmp/deployment.yaml
+#    - echo $CI_CONTAINER_NAME
+#    - kubectl config get-contexts
+#    # kubectl config use-context path/to/agent/repository:agent-name
+#    - kubectl config use-context panda/asus_script:panda-agent
+#    # - kubectl get pods -A
+#    - kubectl apply -n panda -f tmp/deployment.yaml
+#    - echo "kafka-grpc_client_wrapper - Application successfully deployed."
+#  dependencies:
+#    - pre-deploy-job-kafka-client
+#  only:
+#    changes:
+#      - component/kafka/consumer/*
+
+
+#panda-export
+
+build-panda-export:
+  stage: build
+  image: docker:dind
+  services:
+    - name: docker:dind
+  script:
+    - export DOCKER_HOST="tcp://192.168.50.20:2375"
+    - echo $DOCKER_HOST
+    - docker info
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build --force-rm --build-arg git_username=$CI_DEPLOY_USER --build-arg git_access_token=$CI_DEPLOY_PASSWORD -t $CI_APPLICATION_REPOSITORY_PANDA_EXPORT -f panda-export/Dockerfile .
+    - docker tag $CI_APPLICATION_REPOSITORY_PANDA_EXPORT $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-export:latest
+    - docker push $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-export
+    - docker push $CI_APPLICATION_REPOSITORY_PANDA_EXPORT
+    - docker rmi $CI_APPLICATION_REPOSITORY_PANDA_EXPORT
+    - docker rmi $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-export:latest
+    - echo "build_panda-export - Compiling the code..."
+    - echo "build_panda-export - Compile complete."
+  only:
+    changes:
+      - panda-export/*
+
+
+pre-deploy-job-panda-export:
+  image: dibi/envsubst
+  stage: pre-deploy
+  variables:
+    CI_APPLICATION_REPOSITORY: "$CI_APPLICATION_REPOSITORY_PANDA_EXPORT"
+    CI_CONTAINER_NAME: "panda-export"
+    CI_JAEGER_SERVICE_NAME : "panda-export"
+  script:
+    - pwd
+    - envsubst < deployment.yaml > deployment_tmp.yaml
+    - mkdir tmp
+    - mv deployment_tmp.yaml tmp/deployment.yaml
+    - cat tmp/deployment.yaml
+  artifacts:
+    paths:
+      - ./tmp/
+    expire_in: 1 day
+  only:
+    changes:
+      - panda-export/*
+
+deploy-job-panda-export:      # This job runs in the deploy stage.
+  image:
+    name: bitnami/kubectl:latest
+    entrypoint: ['']
+  stage: deploy  # It only runs when *both* jobs in the test stage complete successfully.
+  script:
+    - echo "panda-export - Deploying application..."
+    - env
+    - ls
+    - cat tmp/deployment.yaml
+    - echo $CI_CONTAINER_NAME
+    - kubectl config get-contexts
+    # kubectl config use-context path/to/agent/repository:agent-name
+    - kubectl config use-context panda/asus_script:panda-agent
+    # - kubectl get pods -A
+    - kubectl apply -n panda -f tmp/deployment.yaml
+    - echo "panda-export - Application successfully deployed."
+  dependencies:
+    - pre-deploy-job-panda-export
+  only:
+    changes:
+      - panda-export/*
+
+
+build-panda-grpc-gw:
+  stage: build
+  image: docker:dind
+  services:
+    - name: docker:dind
+  script:
+    - export DOCKER_HOST="tcp://192.168.50.20:2375"
+    - echo $DOCKER_HOST
+    - docker info
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build --force-rm --build-arg git_username=$CI_DEPLOY_USER --build-arg git_access_token=$CI_DEPLOY_PASSWORD -t $CI_APPLICATION_REPOSITORY_PANDA_GRPC_GW -f panda-grpc-gw/Dockerfile .
+    - docker tag $CI_APPLICATION_REPOSITORY_PANDA_GRPC_GW $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-grpc-gw:latest
+    - docker push $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-grpc-gw
+    - docker push $CI_APPLICATION_REPOSITORY_PANDA_GRPC_GW
+    - docker rmi $CI_APPLICATION_REPOSITORY_PANDA_GRPC_GW
+    - docker rmi $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-grpc-gw:latest
+    - echo "build_panda-grpc-gw - Compiling the code..."
+    - echo "build_panda-grpc-gw - Compile complete."
+  only:
+    changes:
+      - panda-grpc-gw/*
+      - proto/*
+
+
+pre-deploy-job-panda-grpc-gw:
+  image: dibi/envsubst
+  stage: pre-deploy
+  variables:
+    CI_APPLICATION_REPOSITORY: "$CI_APPLICATION_REPOSITORY_PANDA_GRPC_GW"
+    CI_CONTAINER_NAME: "panda-grpc-gw"
+    CI_JAEGER_SERVICE_NAME : "panda-grpc-gw"
+  script:
+    - pwd
+    - envsubst < deployment.yaml > deployment_tmp.yaml
+    - mkdir tmp
+    - mv deployment_tmp.yaml tmp/deployment.yaml
+    - cat tmp/deployment.yaml
+  artifacts:
+    paths:
+      - ./tmp/
+    expire_in: 1 day
+  only:
+    changes:
+      - panda-grpc-gw/*
+      - proto/*
+
+deploy-job-panda-grpc-gw:      # This job runs in the deploy stage.
+  image:
+    name: bitnami/kubectl:latest
+    entrypoint: ['']
+  stage: deploy  # It only runs when *both* jobs in the test stage complete successfully.
+  script:
+    - echo "panda-account - Deploying application..."
+    - echo $CI_CONTAINER_NAME
+    - env
+    - ls
+    - cat tmp/deployment.yaml
+    - echo $CI_CONTAINER_NAME
+    - kubectl config get-contexts
+    # kubectl config use-context path/to/agent/repository:agent-name
+    - kubectl config use-context panda/asus_script:panda-agent
+    # - kubectl get pods -A
+    - kubectl apply -n panda -f tmp/deployment.yaml
+    - echo "panda-grpc-gw - Application successfully deployed."
+  dependencies:
+    - pre-deploy-job-panda-grpc-gw
+  only:
+    changes:
+      - panda-grpc-gw/*
+      - proto/*

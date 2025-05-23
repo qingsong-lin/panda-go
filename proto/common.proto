@@ -1,0 +1,69 @@
+syntax = "proto3";
+option go_package = "./pb";  // 指定生成的Go代码在你项目中的导入路径
+package pb;
+
+import "protoc-gen-openapiv2/options/annotations.proto";
+import "google/api/annotations.proto";
+
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+  info: {
+    title: "common http api";
+    version: "1.0";
+    license: {
+      name: "NO.000000000";
+    };
+  };
+  schemes: HTTP;
+  consumes: "application/json";
+  produces: "application/json";
+};
+
+service CommonService {
+  rpc setLogLevel (setLogLevelRequest) returns (SetLogLevelResponse) {
+    option (google.api.http) = {
+      get: "/v1/{level}"
+    };
+  };
+
+  rpc DownloadPprofFile (DownloadPprofFileRequest) returns (stream FileChunk) {
+    option (google.api.http) = {
+      post: "/v1/download-pprof"
+      body:"*"
+    };
+  }
+}
+
+message DownloadPprofFileRequest {
+  enum PprofType {
+    goroutine = 0;
+    heap = 1;
+    threadcreate = 2;
+    allocs = 3;
+    block = 4;
+    mutex= 5;
+    profile = 6;
+  }
+  repeated PprofType pprof_types = 1;
+}
+
+message FileChunk {
+  bytes data = 1;
+}
+
+message setLogLevelRequest {
+  string level = 1;
+}
+
+message SetLogLevelResponse {
+  int32  code = 1;
+  string err_msg = 2;
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+// 响应消息
+message HelloResponse {
+  string reply = 1;
+}

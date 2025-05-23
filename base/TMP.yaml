@@ -1,0 +1,70 @@
+build-panda-grpc-gw:
+  stage: build
+  image: docker:dind
+  services:
+    - name: docker:dind
+  script:
+    - export DOCKER_HOST="tcp://192.168.50.20:2375"
+    - echo $DOCKER_HOST
+    - docker info
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build --force-rm --build-arg git_username=$CI_DEPLOY_USER --build-arg git_access_token=$CI_DEPLOY_PASSWORD -t $CI_APPLICATION_REPOSITORY_PANDA_GRPC_GW -f panda-grpc-gw/Dockerfile .
+    - docker tag $CI_APPLICATION_REPOSITORY_PANDA_GRPC_GW $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-grpc-gw:latest
+    - docker push $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-grpc-gw
+    - docker push $CI_APPLICATION_REPOSITORY_PANDA_GRPC_GW
+    - docker rmi $CI_APPLICATION_REPOSITORY_PANDA_GRPC_GW
+    - docker rmi $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME/panda-grpc-gw:latest
+    - echo "build_panda-grpc-gw - Compiling the code..."
+    - echo "build_panda-grpc-gw - Compile complete."
+  only:
+    changes:
+      - panda-grpc-gw/*
+      - proto/*
+
+
+pre-deploy-job-panda-grpc-gw:
+  image: dibi/envsubst
+  stage: pre-deploy
+  variables:
+    CI_APPLICATION_REPOSITORY: "$CI_APPLICATION_REPOSITORY_PANDA_GRPC_GW"
+    CI_CONTAINER_NAME: "panda-grpc-gw"
+    CI_JAEGER_SERVICE_NAME : "panda-grpc-gw"
+  script:
+    - pwd
+    - envsubst < deployment.yaml > deployment_tmp.yaml
+    - mkdir tmp
+    - mv deployment_tmp.yaml tmp/deployment.yaml
+    - cat tmp/deployment.yaml
+  artifacts:
+    paths:
+      - ./tmp/
+    expire_in: 1 day
+  only:
+    changes:
+      - panda-grpc-gw/*
+      - proto/*
+
+deploy-job-panda-account:      # This job runs in the deploy stage.
+  image:
+    name: bitnami/kubectl:latest
+    entrypoint: ['']
+  stage: deploy  # It only runs when *both* jobs in the test stage complete successfully.
+  script:
+    - echo "panda-account - Deploying application..."
+    - echo $CI_CONTAINER_NAME
+    - env
+    - ls
+    - cat tmp/deployment.yaml
+    - echo $CI_CONTAINER_NAME
+    - kubectl config get-contexts
+    # kubectl config use-context path/to/agent/repository:agent-name
+    - kubectl config use-context panda/asus_script:panda-agent
+    # - kubectl get pods -A
+    - kubectl apply -n test -f tmp/deployment.yaml
+    - echo "panda-grpc-gw - Application successfully deployed."
+  dependencies:
+    - pre-deploy-job-panda-grpc-gw
+  only:
+    changes:
+      - panda-grpc-gw/*
+      - proto/*

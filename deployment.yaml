@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $CI_CONTAINER_NAME
+  namespace: $NAMESPACE
+  labels:
+    app: $CI_CONTAINER_NAME
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: $CI_CONTAINER_NAME
+  template:
+    metadata:
+      labels:
+        app: $CI_CONTAINER_NAME
+#        sidecar.istio.io/inject: 'true'
+        version: 1.0.0
+    spec:
+      serviceAccountName: panda-read-only
+      restartPolicy: Always
+      containers:
+        - name: $CI_CONTAINER_NAME
+          image: $CI_APPLICATION_REPOSITORY
+          env:
+            - name: JAEGER_SERVICE_NAME
+              value: $CI_JAEGER_SERVICE_NAME
+            - name: JAEGER_TRACEID_128BIT
+              value: "true"
+            - name: JAEGER_REPORTER_MAX_QUEUE_SIZE
+              value: "10000"
+            - name: JAEGER_AGENT_HOST
+              value: "jaeger-agent.common"
+            - name: JAEGER_AGENT_PORT
+              value: "6831"
+            - name: JAEGER_SAMPLER_TYPE
+              value: "const"
+            - name: JAEGER_SAMPLER_PARAM
+              value: "1"
+            - name: JAEGER_REPORTER_LOG_SPANS
+              value: "true"
+            - name:  JAEGER_REPORTER_FLUSH_INTERVAL
+              value: "5s"
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NACOS_CONFIG
+              value: '$NACOS_CONFIG'
+          ports:
+          - name: gin-port
+            containerPort: 8080
+            protocol: TCP
+          imagePullPolicy: IfNotPresent
+      imagePullSecrets:
+        - name: $SECRET_NAME
